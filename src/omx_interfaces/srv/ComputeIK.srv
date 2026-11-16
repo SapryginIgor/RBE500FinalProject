@@ -1,0 +1,6 @@
+# Tool pose relative to the base; position in meters.
+geometry_msgs/Pose target_pose
+---
+# ROS [joint1, joint2, joint3, joint4] in radians; empty on failure.
+float64[] joint_angles
+bool success
