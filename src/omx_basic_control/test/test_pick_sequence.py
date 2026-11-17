@@ -5,7 +5,8 @@ import numpy as np
 import rclpy
 from rclpy.parameter import Parameter
 from rclpy.task import Future
-from control_msgs.action import FollowJointTrajectory
+from action_msgs.msg import GoalStatus
+from control_msgs.action import FollowJointTrajectory, GripperCommand
 from omx_interfaces.srv import ComputeIK
 
 from omx_basic_control.forward import compute_fk
@@ -104,6 +105,27 @@ class PickSequenceTests(unittest.TestCase):
         times = [p.time_from_start.sec+p.time_from_start.nanosec/1e9 for p in goal.trajectory.points]
         self.assertEqual(times, [3.0])
 
+    def gripper_response(self, status, stalled, position=0.002):
+        result = GripperCommand.Result(position=position, stalled=stalled)
+        return Mock(status=status, result=result)
+
+    def test_gripper_stalled_on_object_counts_as_grasp(self):
+        self.node.execute_goal = Mock(
+            return_value=self.gripper_response(GoalStatus.STATUS_ABORTED, stalled=True))
+        RobotController.send_gripper_command(self.node, GRIPPER_CLOSED)
+        goal = self.node.execute_goal.call_args.args[1]
+        self.assertEqual(goal.command.position, GRIPPER_CLOSED)
+
+    def test_gripper_reaching_target_succeeds(self):
+        self.node.execute_goal = Mock(
+            return_value=self.gripper_response(GoalStatus.STATUS_SUCCEEDED, stalled=False))
+        RobotController.send_gripper_command(self.node, GRIPPER_OPEN)
+
+    def test_gripper_abort_without_stall_is_an_error(self):
+        self.node.execute_goal = Mock(
+            return_value=self.gripper_response(GoalStatus.STATUS_ABORTED, stalled=False))
+        with self.assertRaisesRegex(RuntimeError, 'Gripper'):
+            RobotController.send_gripper_command(self.node, GRIPPER_CLOSED)
 
 if __name__ == '__main__':
     unittest.main()

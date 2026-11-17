@@ -40,7 +40,7 @@ class RobotController(Node):
 
         self.declare_parameter('grasp_x', 0.13276)
         self.declare_parameter('grasp_y', -0.000199)
-        self.declare_parameter('grasp_z', 0.057724)
+        self.declare_parameter('grasp_z', 0.04)
         self.declare_parameter('lift_height', 0.04)
         self.declare_parameter('tool_angle_deg', -90.0)
         self.declare_parameter('move_duration', 3.0)
@@ -102,6 +102,13 @@ class RobotController(Node):
         return pregrasp, grasp, duration
 
     def send_goal(self, client, goal, timeout):
+        response = self.execute_goal(client, goal, timeout)
+        if response.status != GoalStatus.STATUS_SUCCEEDED:
+            raise RuntimeError('Controller failed to complete the movement')
+        return response.result
+
+    def execute_goal(self, client, goal, timeout):
+        """Run an action goal to completion; return its status and result unchecked."""
         future = client.send_goal_async(goal)
         rclpy.spin_until_future_complete(self, future, timeout_sec=5.0)
         if not future.done():
@@ -116,10 +123,10 @@ class RobotController(Node):
             self.cancel_active_goal()
             raise RuntimeError('Movement timed out')
         self.active_goal = None
-        result = future.result()
-        if result is None or result.status != GoalStatus.STATUS_SUCCEEDED:
-            raise RuntimeError('Controller failed to complete the movement')
-        return result.result
+        response = future.result()
+        if response is None:
+            raise RuntimeError('Controller returned no result')
+        return response
 
     def cancel_active_goal(self):
         if self.active_goal is not None and rclpy.ok():
@@ -142,7 +149,17 @@ class RobotController(Node):
         goal = GripperCommand.Goal()
         goal.command.position = position
         goal.command.max_effort = 10.0
-        self.send_goal(self.gripper_client, goal, 5.0)
+        response = self.execute_goal(self.gripper_client, goal, 5.0)
+        result = response.result
+        if response.status == GoalStatus.STATUS_SUCCEEDED:
+            return
+        # The controller aborts when the fingers stop short of the target
+        # (e.g. on the object) - for a grasp that is the expected outcome, so we allow it.
+        if response.status == GoalStatus.STATUS_ABORTED and result.stalled:
+            self.get_logger().info(
+                f'Gripper stopped at {result.position:.4f} (object in the way)')
+            return
+        raise RuntimeError('Gripper failed to complete the movement')
 
     def run(self):
         if not self.ik_client.wait_for_service(timeout_sec=10.0):
