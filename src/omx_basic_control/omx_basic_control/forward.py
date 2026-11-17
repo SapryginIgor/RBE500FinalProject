@@ -3,11 +3,12 @@
 import math
 from math import sin, cos
 
+from geometry_msgs.msg import PoseStamped
 import numpy as np
 import rclpy
 from rclpy.node import Node
+from scipy.spatial.transform import Rotation
 from sensor_msgs.msg import JointState
-from std_msgs.msg import Float32MultiArray, MultiArrayDimension
 
 JOINT_NAMES = ('joint1', 'joint2', 'joint3', 'joint4')
 
@@ -60,16 +61,18 @@ def compute_fk(joint_angles):
     return forward_kinematics(ros_to_dh_angles(joint_angles))
 
 
-def transform_message(transform):
-    """Original row-major 4x4 message contract; translations in millimeters."""
-    matrix = transform.copy()
-    matrix[:3, 3] *= 1000
-    msg = Float32MultiArray()
-    msg.layout.dim = [
-        MultiArrayDimension(label='rows', size=4, stride=16),
-        MultiArrayDimension(label='cols', size=4, stride=4),
-    ]
-    msg.data = matrix.flatten().tolist()
+def pose_message(transform, stamp, frame_id):
+    """End-effector pose in the DH base frame; position in meters (ROS convention)."""
+    msg = PoseStamped()
+    msg.header.stamp = stamp
+    msg.header.frame_id = frame_id
+    msg.pose.position.x, msg.pose.position.y, msg.pose.position.z = (
+        float(v) for v in transform[:3, 3])
+    x, y, z, w = Rotation.from_matrix(transform[:3, :3]).as_quat()
+    msg.pose.orientation.x = float(x)
+    msg.pose.orientation.y = float(y)
+    msg.pose.orientation.z = float(z)
+    msg.pose.orientation.w = float(w)
     return msg
 
 
@@ -87,33 +90,23 @@ def joint_angles_from_state(msg):
 class ForwardKin(Node):
     def __init__(self):
         super().__init__('forward_kin')
-        self.publisher_ = self.create_publisher(Float32MultiArray, 'fk_output', 10)
-        self.subscription = self.create_subscription(
-            Float32MultiArray, 'fk_input', self.listener_callback, 10
+        self.pose_publisher = self.create_publisher(PoseStamped, 'fk_pose', 10)
+        self.declare_parameter('frame_id', 'dh_base')
+        self.joint_subscription = self.create_subscription(
+            JointState, '/joint_states', self.joint_state_callback, 10
         )
-        self.declare_parameter('use_joint_states', False)
-        if self.get_parameter('use_joint_states').value:
-            self.joint_subscription = self.create_subscription(
-                JointState, '/joint_states', self.joint_state_callback, 10
-            )
-
-    def listener_callback(self, msg):
-        try:
-            angles = np.radians(msg.data)
-            self.publish_transform(compute_fk(angles), angles, 'request')
-        except ValueError as error:
-            self.get_logger().warning(str(error))
 
     def joint_state_callback(self, msg):
         try:
             angles = joint_angles_from_state(msg)
-            self.publish_transform(compute_fk(angles), angles, 'joint feedback')
+            self.publish_transform(compute_fk(angles), angles)
         except ValueError as error:
             self.get_logger().warning(str(error))
 
-    def publish_transform(self, transform, angles, source):
-        msg = transform_message(transform)
-        self.publisher_.publish(msg)
+    def publish_transform(self, transform, angles):
+        self.pose_publisher.publish(pose_message(
+            transform, self.get_clock().now().to_msg(),
+            self.get_parameter('frame_id').value))
         Tf = transform.copy()
         Tf[:3, 3] *= 1000
         Tf[np.abs(Tf) < 0.000005] = 0
@@ -124,10 +117,8 @@ class ForwardKin(Node):
             f'Tip position (mm): {Tf[:3, 3]}\n'
             f'T Matrix (base -> tool, mm):\n{tf_str}'
         )
-        if source == 'joint feedback':
-            self.get_logger().info(report, throttle_duration_sec=1.0)
-        else:
-            self.get_logger().info(report)
+        # Joint states arrive at ~100 Hz; log once per second, publish every sample
+        self.get_logger().info(report, throttle_duration_sec=1.0)
 
 
 def main(args=None):

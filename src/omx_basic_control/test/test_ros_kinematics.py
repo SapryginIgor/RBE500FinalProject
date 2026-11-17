@@ -2,8 +2,9 @@ import math
 import unittest
 
 import numpy as np
+from builtin_interfaces.msg import Time
 
-from omx_basic_control.forward import forward_kinematics, compute_fk, ros_to_dh_angles
+from omx_basic_control.forward import forward_kinematics, compute_fk, ros_to_dh_angles, pose_message
 from omx_basic_control.inverse import quaternion_rotation, compute_ik, dh_to_ros_angles
 
 
@@ -52,6 +53,15 @@ class RosKinematicsTests(unittest.TestCase):
                 continue
             result = compute_ik(target[:3, 3], tool_quaternion(q))
             np.testing.assert_allclose(compute_fk(result), target, atol=1e-8)
+
+    def test_pose_message_matches_fk(self):
+        for q in np.random.default_rng(7).uniform(-math.pi, math.pi, (100, 4)):
+            T = compute_fk(q)
+            pose = pose_message(T, Time(), 'dh_base').pose
+            p, o = pose.position, pose.orientation
+            np.testing.assert_allclose([p.x, p.y, p.z], T[:3, 3], atol=1e-12)
+            np.testing.assert_allclose(
+                quaternion_rotation([o.x, o.y, o.z, o.w]), T[:3, :3], atol=1e-10)
 
     def test_target_behind_base_axis_is_rejected(self):
         q = [0, math.pi, 0, 0]

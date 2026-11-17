@@ -26,29 +26,31 @@ Start the node:
 ros2 run omx_basic_control forward_kin
 ```
 
-Send four ROS joint angles in degrees from another terminal:
+The node subscribes to `/joint_states` (radians, matched by name) and, in that
+callback, computes and publishes the end-effector pose whenever new joint values
+arrive. To see it:
 
 ```bash
-ros2 topic pub --once /fk_input std_msgs/msg/Float32MultiArray \
-  '{data: [0.0, 0.0, 0.0, 0.0]}'
+ros2 topic echo /fk_pose
 ```
 
-The node prints the matrix and position. `/fk_output` carries the row-major
-4x4 base-to-tool DH transform, with translation in mm.
+`/fk_pose` is a `geometry_msgs/PoseStamped` in the DH base frame (`frame_id`
+`dh_base`, settable with `-p frame_id:=...`): position in meters, orientation as
+a quaternion. The node also logs the full 4x4 DH transform (translation in mm)
+to the terminal. Feedback logging is limited to once per
+second; every sample is published.
+
 Zero ROS angles give `[281.4, 0, 224.326]` mm. The tool orientation is a +90-degree
 rotation about x, with quaternion `[0.7071067811865476, 0, 0, 0.7071067811865476]`.
 These coordinates use the drawing's base height and 133.4 mm tool length.
-To print the ROS message, run `ros2 topic echo /fk_output --once` before publishing.
 
-To use measured joint angles instead:
+To test without a robot, publish joint angles (radians) yourself while no robot
+or sim is running:
 
 ```bash
-ros2 run omx_basic_control forward_kin --ros-args -p use_joint_states:=true
+ros2 topic pub --once /joint_states sensor_msgs/msg/JointState \
+  "{name: [joint1, joint2, joint3, joint4], position: [0.0, 0.0, 0.0, 0.0]}"
 ```
-
-Joint states are read in radians and matched by name. Feedback logging is
-limited to once per second; all valid samples are published.
-The pick controller publishes the same mapped FK on `/forward_kinematics/output`.
 
 ## IK
 

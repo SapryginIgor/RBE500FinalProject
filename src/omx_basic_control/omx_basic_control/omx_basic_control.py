@@ -8,11 +8,10 @@ from rclpy.action import ActionClient
 from rclpy.node import Node
 from rclpy.duration import Duration
 from sensor_msgs.msg import JointState
-from std_msgs.msg import Float32MultiArray
 from trajectory_msgs.msg import JointTrajectoryPoint
 from omx_interfaces.srv import ComputeIK
 
-from .forward import compute_fk, joint_angles_from_state, transform_message
+from .forward import joint_angles_from_state
 
 
 GRIPPER_OPEN = 0.019
@@ -34,15 +33,11 @@ class RobotController(Node):
         self.subscription = self.create_subscription(
             JointState, '/joint_states', self.joint_state_callback, 10
         )
-        self.fk_publisher = self.create_publisher(
-            Float32MultiArray, '/forward_kinematics/output', 10
-        )
         self.arm_joint_names = ['joint1', 'joint2', 'joint3', 'joint4']
         self.arm_joint_positions = [0.0]*4
         self.joint_received = False
         self.active_goal = None
 
-        # Default target is the previous grasp location, now expressed in meters.
         self.declare_parameter('grasp_x', 0.13276)
         self.declare_parameter('grasp_y', -0.000199)
         self.declare_parameter('grasp_z', 0.057724)
@@ -57,7 +52,6 @@ class RobotController(Node):
         except ValueError:
             return
         self.joint_received = True
-        self.fk_publisher.publish(transform_message(compute_fk(self.arm_joint_positions)))
 
     def request_ik(self, position, orientation):
         request = ComputeIK.Request()
